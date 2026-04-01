@@ -4,18 +4,17 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
 
-// RenameRule defines how a URL template maps to a Manifest filename
 type RenameRule struct {
 	Eclass  string
-	Pattern string
+	URL     string
 	Target  string
 }
 
-// SniffRenameLogic parses an eclass to find '->' rename patterns
 func SniffRenameLogic(path string) (*RenameRule, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -23,25 +22,23 @@ func SniffRenameLogic(path string) (*RenameRule, error) {
 	}
 	defer file.Close()
 
-	// Regex to find the '->' operator within a SRC_URI context
-	// Matches: SRC_URI="... -> ${P}.tar.gz"
-	re := regexp.MustCompile(`SRC_URI=.*?\s+->\s+["']?([^"'\s]+)["']?`)
+	// Improved Regex: Finds "URL -> Rename" even with spacing/quotes
+	// Groups: 1=URL, 2=Target
+	re := regexp.MustCompile(`SRC_URI=["']?([^"'\s]+)\s+->\s+([^"'\s]+)["']?`)
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		
-		// If we find the '->' operator, extract the target name
 		matches := re.FindStringSubmatch(line)
-		if len(matches) > 1 {
+		if len(matches) > 2 {
 			return &RenameRule{
-				Eclass:  strings.TrimSuffix(filepath.Base(path), ".eclass"),
-				Pattern: "standard-rename",
-				Target:  matches[1],
+				Eclass: strings.TrimSuffix(filepath.Base(path), ".eclass"),
+				URL:    matches[1],
+				Target: matches[2],
 			}, nil
 		}
 	}
-	return nil, fmt.Errorf("no rename logic found in %s", path)
+	return nil, fmt.Errorf("no complex SRC_URI logic in %s", path)
 }
 
 func main() {
@@ -53,12 +50,13 @@ func main() {
 	path := os.Args[1]
 	rule, err := SniffRenameLogic(path)
 	if err != nil {
-		// If it doesn't rename, it's a "flat" fetch (skip)
-		os.Exit(0) 
+		// Just output a flat mapping if no rename is found
+		eName := strings.TrimSuffix(filepath.Base(path), ".eclass")
+		fmt.Printf("[%s]\nrename = false\n", eName)
+		return
 	}
 
-	// Output as a TOML snippet for the Ghost-Hash bot
-	fmt.Printf("[rename_logic.%s]\n", rule.Eclass)
-	fmt.Printf("type = \"%s\"\n", rule.Pattern)
-	fmt.Printf("template = \"%s\"\n", rule.Target)
+	fmt.Printf("[%s]\n", rule.Eclass)
+	fmt.Printf("url_template = \"%s\"\n", rule.URL)
+	fmt.Printf("rename_template = \"%s\"\n", rule.Target)
 }
